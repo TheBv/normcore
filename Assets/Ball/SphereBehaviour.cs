@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR;
 using Normal.Realtime;
+using UnityEngine.InputSystem;
 using System.Linq;
 
 [RequireComponent(typeof(Rigidbody)), RequireComponent(typeof(RealtimeTransform))]
@@ -14,6 +15,8 @@ public class SphereBehaviour : MonoBehaviour
 
     [SerializeField] private SphereCollider _collider;
 
+    [SerializeField] private Transform _cameraOffset;
+
     private enum Hand { LeftHand, RightHand };
 
     [SerializeField] private Hand _hand = Hand.LeftHand;
@@ -21,7 +24,7 @@ public class SphereBehaviour : MonoBehaviour
     [SerializeField] private Rigidbody body;
 
     private static int VELOCITY_LENGTH = 5;
-    
+
     private Vector3[] releaseVelocities = new Vector3[VELOCITY_LENGTH];
 
     private int updateCount = 0;
@@ -47,13 +50,26 @@ public class SphereBehaviour : MonoBehaviour
         if (!_realtime.connected)
             return;
         XRNode node = _hand == Hand.LeftHand ? XRNode.LeftHand : XRNode.RightHand;
-        string trigger = _hand == Hand.LeftHand ? "Left Trigger" : "Right Trigger";
 
+        string trigger = _hand == Hand.LeftHand ? "Left Trigger" : "Right Trigger";
         // Get the position & rotation of the hand
         bool handIsTracking = UpdatePose(node, ref _handPosition, ref _handRotation);
-
+        _handPosition += _cameraOffset.position;
         // Figure out if the trigger is pressed or not
         bool triggerPressed = Input.GetAxisRaw(trigger) > 0.1f;
+        var leftHandDevices = new List<UnityEngine.XR.InputDevice>();
+        UnityEngine.XR.InputDevices.GetDevicesAtXRNode(UnityEngine.XR.XRNode.LeftHand, leftHandDevices);
+
+        if (leftHandDevices.Count == 1)
+        {
+            UnityEngine.XR.InputDevice device = leftHandDevices[0];
+            bool triggerValue;
+            if (device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primaryButton, out triggerValue) && triggerValue)
+            {
+                transform.position = _handPosition;
+                body.velocity = new Vector3(0, 0, 0);
+            }
+        }
 
         if (!handIsTracking)
             triggerPressed = false;
@@ -68,12 +84,14 @@ public class SphereBehaviour : MonoBehaviour
             localGrabPoint = _collider.ClosestPointOnBounds(_handPosition);
             localGrabRotation = Quaternion.Inverse(_handRotation) * transform.rotation;
             _realtimeTransform.RequestOwnership();
+            body.isKinematic = true;
         }
         else if (TriggerReleased(triggerPressed, previousTriggerState) && isFollowingHand)
         {
             Debug.Log("Released");
             isFollowingHand = false;
             released = true;
+            body.isKinematic = false;
         }
 
         previousTriggerState = triggerPressed;
@@ -95,7 +113,7 @@ public class SphereBehaviour : MonoBehaviour
         {
             var prevPosition = transform.position;
             transform.rotation = _handRotation;
-            
+
             transform.position = _handPosition;
             releaseVelocities[updateCount % VELOCITY_LENGTH] = (transform.position - prevPosition) / Time.fixedDeltaTime;
             updateCount++;
@@ -127,12 +145,10 @@ public class SphereBehaviour : MonoBehaviour
                 Quaternion nodeRotation;
                 bool gotPosition = nodeState.TryGetPosition(out nodePosition);
                 bool gotRotation = nodeState.TryGetRotation(out nodeRotation);
-
                 if (gotPosition)
                     position = nodePosition;
                 if (gotRotation)
                     rotation = nodeRotation;
-
                 return gotPosition;
             }
         }
